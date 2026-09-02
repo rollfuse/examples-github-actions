@@ -1,0 +1,72 @@
+# THE EXAMPLE. This is the pattern this repo exists to show: gate a
+# deploy step on a rollfuse flag, so flipping the flag off (a kill
+# switch) blocks the next deploy without touching this workflow, without
+# a new commit, and without redeploying anything — the same "change
+# behavior without a new deployment" property the SDKs' local evaluation
+# gives a running service, applied to a pipeline step instead.
+#
+# Copy this workflow into your own repo and adapt:
+#   - Point ROLLFUSE_API_BASE_URL at your real environment and put a real
+#     Service Credential in a repository secret (never a literal, unlike
+#     the demo-credential below).
+#   - Delete the "mock rollfuse API" step — you don't need it against a
+#     real environment. It exists here only so this workflow runs with no
+#     rollfuse account, the same self-contained principle every example
+#     in this GitHub org follows.
+#   - Replace the "deploy (simulated)" step with your real deploy command.
+name: deploy-with-flag-gate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      simulate:
+        description: "Simulate the deploys-enabled flag as on or off, to see both outcomes"
+        type: choice
+        options: ["on", "off"]
+        default: "on"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Stands in for the real rollfuse platform API — see the note at
+      # the top of this file. On workflow_dispatch, honors the "simulate"
+      # input so this workflow can demonstrate both outcomes on demand
+      # from the Actions tab; a plain push always uses the checked-in
+      # config/deploy-gate-config.json as-is (flag on).
+      - name: start mock rollfuse API
+        run: |
+          CONFIG=config/deploy-gate-config.json
+          if [ "${{ inputs.simulate }}" = "off" ]; then
+            CONFIG=/tmp/deploy-gate-config-off.json
+            sed 's/"default_variation": "on"/"default_variation": "off"/' config/deploy-gate-config.json > "$CONFIG"
+          fi
+          CONFIG_PATH="$CONFIG" LISTEN_ADDR=:8090 go run ./cmd/mock-rollfuse-api &
+          for i in $(seq 1 15); do curl -fsS http://localhost:8090/healthz && exit 0; sleep 1; done
+          echo "mock rollfuse API never became healthy" >&2
+          exit 1
+
+      - name: flag gate — deploys-enabled
+        env:
+          ROLLFUSE_API_BASE_URL: http://localhost:8090
+          ROLLFUSE_SERVICE_CREDENTIAL: demo-credential
+          FLAG_KEY: deploys-enabled
+          WANT_VARIATION: "on"
+        run: go run ./cmd/flag-gate
+
+      # This step never runs if the gate above exited non-zero — GitHub
+      # Actions stops the job on a failed step by default. That's the
+      # whole pattern.
+      - name: deploy (simulated)
+        run: echo "deploying... (this is a demo repo — nothing real happens here)"

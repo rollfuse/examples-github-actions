@@ -1,0 +1,16 @@
+{
+  "environment_id": "env_demo",
+  "version": 1,
+  "flags": [
+    {
+      "flag_key": "deploys-enabled",
+      "enabled": true,
+      "default_variation": "on",
+      "variations": [
+        { "key": "on", "value": true },
+        { "key": "off", "value": false }
+      ],
+      "rules": []
+    }
+  ]
+}

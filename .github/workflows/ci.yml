@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build, vet
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - run: go build ./...
+      - run: go vet ./...
+      - run: gofmt -l . | tee /tmp/unformatted.txt; test ! -s /tmp/unformatted.txt
+
+  gate-smoke-test:
+    name: flag-gate exercises both outcomes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: start mock rollfuse API (flag on)
+        run: |
+          CONFIG_PATH=config/deploy-gate-config.json LISTEN_ADDR=:8090 go run ./cmd/mock-rollfuse-api &
+          for i in $(seq 1 15); do curl -fsS http://localhost:8090/healthz && exit 0; sleep 1; done
+          exit 1
+
+      - name: flag-gate passes when the flag matches
+        env:
+          ROLLFUSE_API_BASE_URL: http://localhost:8090
+          ROLLFUSE_SERVICE_CREDENTIAL: demo-credential
+          FLAG_KEY: deploys-enabled
+          WANT_VARIATION: "on"
+        run: go run ./cmd/flag-gate
+
+      - name: flag-gate blocks when the flag doesn't match (exit code asserted)
+        env:
+          ROLLFUSE_API_BASE_URL: http://localhost:8090
+          ROLLFUSE_SERVICE_CREDENTIAL: demo-credential
+          FLAG_KEY: deploys-enabled
+          WANT_VARIATION: "off"
+        run: |
+          if go run ./cmd/flag-gate; then
+            echo "expected flag-gate to fail (want-variation=off, flag is on) but it exited 0" >&2
+            exit 1
+          fi
+          echo "confirmed: flag-gate exited non-zero as expected"

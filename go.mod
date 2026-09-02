@@ -1,0 +1,5 @@
+module github.com/rollfuse/examples-github-actions
+
+go 1.26.6
+
+require github.com/rollfuse/go-sdk v0.1.0
